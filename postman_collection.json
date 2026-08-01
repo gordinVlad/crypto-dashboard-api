@@ -1,0 +1,169 @@
+{
+  "info": {
+    "name": "Crypto Dashboard API",
+    "description": "Collection for the Crypto Dashboard API home assignment. Run 'Login' first to auto-fill the access_token variable used by protected requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "access_token", "value": "" },
+    { "key": "user_email", "value": "user@example.com" },
+    { "key": "user_password", "value": "password123" },
+    { "key": "cryptocurrency_id", "value": "1" },
+    { "key": "watchlist_item_id", "value": "1" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\",\n  \"password\": \"{{user_password}}\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.access_token) {",
+                  "    pm.collectionVariables.set('access_token', data.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "{{user_email}}" },
+                { "key": "password", "value": "{{user_password}}" }
+              ]
+            },
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api", "auth", "login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cryptocurrencies",
+      "item": [
+        {
+          "name": "Refresh from CoinGecko",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/cryptocurrencies/refresh?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cryptocurrencies", "refresh"],
+              "query": [{ "key": "limit", "value": "50" }]
+            }
+          }
+        },
+        {
+          "name": "List cryptocurrencies",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/cryptocurrencies?skip=0&limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cryptocurrencies"],
+              "query": [
+                { "key": "skip", "value": "0" },
+                { "key": "limit", "value": "100" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get cryptocurrency details",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/cryptocurrencies/{{cryptocurrency_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cryptocurrencies", "{{cryptocurrency_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get price history",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/cryptocurrencies/{{cryptocurrency_id}}/history?days=7",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cryptocurrencies", "{{cryptocurrency_id}}", "history"],
+              "query": [{ "key": "days", "value": "7" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Watchlist",
+      "item": [
+        {
+          "name": "Get my watchlist",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/watchlist", "host": ["{{base_url}}"], "path": ["api", "watchlist"] }
+          }
+        },
+        {
+          "name": "Add to watchlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cryptocurrency_id\": {{cryptocurrency_id}}\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/watchlist", "host": ["{{base_url}}"], "path": ["api", "watchlist"] }
+          }
+        },
+        {
+          "name": "Remove from watchlist",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/watchlist/{{watchlist_item_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "watchlist", "{{watchlist_item_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        }
+      ]
+    }
+  ]
+}

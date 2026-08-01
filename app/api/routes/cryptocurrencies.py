@@ -1,0 +1,168 @@
+"""
+Cryptocurrency routes: listing, details, refresh from external provider,
+and historical price data.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_current_user_optional
+from app.crud.crypto import (
+    add_price_history_points,
+    get_all_cryptocurrencies,
+    get_cryptocurrency_by_id,
+    get_price_history,
+    upsert_cryptocurrency,
+)
+from app.crud.watchlist import get_watchlist_crypto_ids
+from app.db.database import get_db
+from app.db.models import User
+from app.schemas.crypto import (
+    CryptocurrencyDetail,
+    CryptocurrencyOut,
+    PriceHistoryOut,
+    PriceHistoryPoint,
+    RefreshResult,
+)
+from app.services.coingecko_client import CoinGeckoError, coingecko_client
+
+router = APIRouter(prefix="/api/cryptocurrencies", tags=["cryptocurrencies"])
+
+
+@router.get("", response_model=list[CryptocurrencyOut])
+def list_cryptocurrencies(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=250),
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """
+    Get the dashboard-style list of current cryptocurrency rates.
+    Data comes from the local database; call `POST /refresh` first (or
+    periodically) to sync it with the external provider.
+
+    If an authenticated user's token is provided, each coin is flagged
+    with `is_in_watchlist` for that user.
+    """
+    coins = get_all_cryptocurrencies(db, skip=skip, limit=limit)
+    watchlist_ids = (
+        get_watchlist_crypto_ids(db, current_user.id) if current_user else set()
+    )
+
+    result = []
+    for coin in coins:
+        item = CryptocurrencyOut.model_validate(coin)
+        item.is_in_watchlist = coin.id in watchlist_ids
+        result.append(item)
+    return result
+
+
+@router.get("/{crypto_id}", response_model=CryptocurrencyDetail)
+def get_cryptocurrency(
+    crypto_id: int,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """Get detailed information for a single cryptocurrency by internal id."""
+    coin = get_cryptocurrency_by_id(db, crypto_id)
+    if not coin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Cryptocurrency not found"
+        )
+    item = CryptocurrencyDetail.model_validate(coin)
+    if current_user:
+        item.is_in_watchlist = coin.id in get_watchlist_crypto_ids(db, current_user.id)
+    return item
+
+
+@router.get("/{crypto_id}/history", response_model=PriceHistoryOut)
+def get_cryptocurrency_history(
+    crypto_id: int,
+    days: int = Query(7, ge=1, le=365, description="Number of days of history"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get historical price data for a cryptocurrency.
+
+    Strategy: if we already have history stored locally, return it.
+    Otherwise, fetch it from CoinGecko, persist it, and return it.
+    """
+    coin = get_cryptocurrency_by_id(db, crypto_id)
+    if not coin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Cryptocurrency not found"
+        )
+
+    existing_history = get_price_history(db, crypto_id)
+    if not existing_history:
+        try:
+            points = coingecko_client.get_market_chart(
+                coin.external_provider_id, days=days
+            )
+        except CoinGeckoError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to fetch history from external provider: {exc}",
+            ) from exc
+
+        add_price_history_points(db, crypto_id, points)
+        existing_history = get_price_history(db, crypto_id)
+
+    return PriceHistoryOut(
+        cryptocurrency_id=coin.id,
+        symbol=coin.symbol,
+        points=[
+            PriceHistoryPoint(price=p.price, timestamp=p.timestamp)
+            for p in existing_history
+        ],
+    )
+
+
+@router.post("/refresh", response_model=RefreshResult)
+def refresh_cryptocurrencies(
+    limit: int = Query(50, ge=1, le=250),
+    db: Session = Depends(get_db),
+):
+    """
+    Refresh cryptocurrency data from the external provider (CoinGecko).
+
+    Fetches the current top coins by market cap and upserts them into the
+    local database (creating new records or updating existing ones).
+    """
+    try:
+        markets = coingecko_client.get_markets(limit=limit)
+    except CoinGeckoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch data from external provider: {exc}",
+        ) from exc
+
+    created_count = 0
+    updated_count = 0
+
+    for coin_data in markets:
+        record_data = {
+            "name": coin_data.get("name"),
+            "symbol": (coin_data.get("symbol") or "").upper(),
+            "external_provider_id": coin_data.get("id"),
+            "current_price": coin_data.get("current_price"),
+            "market_cap": coin_data.get("market_cap"),
+            "price_change_percentage_24h": coin_data.get(
+                "price_change_percentage_24h"
+            ),
+            "image_url": coin_data.get("image"),
+        }
+        if not record_data["external_provider_id"] or not record_data["name"]:
+            continue
+
+        _, was_created = upsert_cryptocurrency(db, record_data)
+        if was_created:
+            created_count += 1
+        else:
+            updated_count += 1
+
+    return RefreshResult(
+        updated_count=updated_count,
+        created_count=created_count,
+        message=f"Synced {created_count + updated_count} coins from CoinGecko",
+    )
