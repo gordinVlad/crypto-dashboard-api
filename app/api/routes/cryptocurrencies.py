@@ -3,10 +3,13 @@ Cryptocurrency routes: listing, details, refresh from external provider,
 and historical price data.
 """
 
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_optional
+from app.core.logging import get_logger
 from app.crud.crypto import (
     add_price_history_points,
     get_all_cryptocurrencies,
@@ -25,6 +28,8 @@ from app.schemas.crypto import (
     RefreshResult,
 )
 from app.services.coingecko_client import CoinGeckoError, coingecko_client
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/cryptocurrencies", tags=["cryptocurrencies"])
 
@@ -94,18 +99,39 @@ def get_cryptocurrency_history(
         )
 
     existing_history = get_price_history(db, crypto_id)
-    if not existing_history:
+    if existing_history:
+        logger.debug(
+            "price history cache hit",
+            extra={"crypto_id": crypto_id, "points": len(existing_history)},
+        )
+    else:
+        logger.info(
+            "price history cache miss, fetching from coingecko",
+            extra={
+                "crypto_id": crypto_id,
+                "external_provider_id": coin.external_provider_id,
+                "days": days,
+            },
+        )
         try:
             points = coingecko_client.get_market_chart(
                 coin.external_provider_id, days=days
             )
         except CoinGeckoError as exc:
+            logger.warning(
+                "failed to fetch price history from coingecko",
+                extra={"crypto_id": crypto_id, "error": str(exc)},
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to fetch history from external provider: {exc}",
             ) from exc
 
-        add_price_history_points(db, crypto_id, points)
+        points_added = add_price_history_points(db, crypto_id, points)
+        logger.info(
+            "price history fetched and persisted",
+            extra={"crypto_id": crypto_id, "points_added": points_added},
+        )
         existing_history = get_price_history(db, crypto_id)
 
     return PriceHistoryOut(
@@ -129,9 +155,14 @@ def refresh_cryptocurrencies(
     Fetches the current top coins by market cap and upserts them into the
     local database (creating new records or updating existing ones).
     """
+    start = time.perf_counter()
     try:
         markets = coingecko_client.get_markets(limit=limit)
     except CoinGeckoError as exc:
+        logger.warning(
+            "crypto refresh failed to fetch from coingecko",
+            extra={"limit": limit, "error": str(exc)},
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Failed to fetch data from external provider: {exc}",
@@ -160,6 +191,17 @@ def refresh_cryptocurrencies(
             created_count += 1
         else:
             updated_count += 1
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    logger.info(
+        "crypto refresh completed",
+        extra={
+            "created_count": created_count,
+            "updated_count": updated_count,
+            "duration_ms": duration_ms,
+            "limit": limit,
+        },
+    )
 
     return RefreshResult(
         updated_count=updated_count,

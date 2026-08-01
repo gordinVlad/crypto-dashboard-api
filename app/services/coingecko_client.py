@@ -6,11 +6,15 @@ is why it was chosen for this project. All network calls are isolated in
 this module so the rest of the application never talks to `httpx` directly.
 """
 
+import time
 from datetime import datetime, timezone
 
 import httpx
 
 from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class CoinGeckoError(Exception):
@@ -24,16 +28,46 @@ class CoinGeckoClient:
 
     def _get(self, path: str, params: dict | None = None) -> dict | list:
         url = f"{self.base_url}{path}"
+        logger.debug("coingecko request starting", extra={"url": url, "params": params})
+        start = time.perf_counter()
         try:
             response = httpx.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.info(
+                "coingecko request succeeded",
+                extra={"url": url, "status_code": response.status_code, "duration_ms": duration_ms},
+            )
             return response.json()
         except httpx.HTTPStatusError as exc:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.warning(
+                "coingecko returned error status",
+                extra={
+                    "url": url,
+                    "status_code": exc.response.status_code,
+                    "duration_ms": duration_ms,
+                },
+            )
             raise CoinGeckoError(
                 f"CoinGecko returned an error status {exc.response.status_code} "
                 f"for {url}"
             ) from exc
+        except httpx.TimeoutException as exc:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.warning(
+                "coingecko request timed out",
+                extra={"url": url, "duration_ms": duration_ms, "error": str(exc)},
+            )
+            raise CoinGeckoError(
+                f"Failed to reach CoinGecko at {url}: {exc}"
+            ) from exc
         except httpx.RequestError as exc:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.warning(
+                "coingecko request failed (connection error)",
+                extra={"url": url, "duration_ms": duration_ms, "error": str(exc)},
+            )
             raise CoinGeckoError(
                 f"Failed to reach CoinGecko at {url}: {exc}"
             ) from exc

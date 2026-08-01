@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # How many coins to fetch/track when refreshing data from the provider
     DEFAULT_COINS_LIMIT: int = 50
 
+    # Logging
+    LOG_LEVEL: str = "INFO"  # DEBUG | INFO | WARNING | ERROR
+    LOG_FORMAT: str = "json"  # "json" | "text" (use "text" for local dev)
+    LOG_DIR: str = "logs"  # directory for on-disk log files (created if missing)
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

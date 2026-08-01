@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.logging import get_logger
 from app.crud.crypto import (
     get_cryptocurrency_by_external_id,
     get_cryptocurrency_by_id,
@@ -21,6 +22,8 @@ from app.db.database import get_db
 from app.db.models import User
 from app.schemas.crypto import CryptocurrencyOut
 from app.schemas.watchlist import WatchlistAddRequest, WatchlistItemOut
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
@@ -76,12 +79,20 @@ def add_watchlist_item(
 
     existing = get_watchlist_item(db, current_user.id, coin.id)
     if existing:
+        logger.info(
+            "watchlist add attempted for existing item",
+            extra={"user_id": current_user.id, "crypto_id": coin.id},
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This cryptocurrency is already in your watchlist",
         )
 
     item = add_to_watchlist(db, current_user.id, coin.id)
+    logger.info(
+        "watchlist item added",
+        extra={"user_id": current_user.id, "crypto_id": coin.id, "symbol": coin.symbol},
+    )
     crypto_out = CryptocurrencyOut.model_validate(coin)
     crypto_out.is_in_watchlist = True
     return WatchlistItemOut(id=item.id, added_at=item.added_at, cryptocurrency=crypto_out)
@@ -97,8 +108,20 @@ def remove_watchlist_item(
     items = get_watchlist_for_user(db, current_user.id)
     match = next((i for i in items if i.id == watchlist_item_id), None)
     if not match:
+        logger.info(
+            "watchlist remove attempted for missing item",
+            extra={"user_id": current_user.id, "watchlist_item_id": watchlist_item_id},
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist item not found"
         )
     remove_from_watchlist(db, match)
+    logger.info(
+        "watchlist item removed",
+        extra={
+            "user_id": current_user.id,
+            "watchlist_item_id": watchlist_item_id,
+            "crypto_id": match.cryptocurrency_id,
+        },
+    )
     return None
