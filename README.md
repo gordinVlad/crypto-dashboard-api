@@ -302,3 +302,8 @@ automatically on every push and pull request to `main`.
 - **Consistent JSON error handling** via global FastAPI exception handlers,
   so every error (validation, HTTP, or unexpected) has the same response
   shape.
+
+## Git repositry
+https://github.com/gordinVlad/crypto-dashboard-api.git
+
+
