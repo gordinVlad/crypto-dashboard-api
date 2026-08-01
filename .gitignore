@@ -19,6 +19,8 @@ htmlcov/
 
 # Log files
 logs/
+*.log
+*.log.*
 
 # Editors / OS
 .vscode/
