@@ -24,3 +24,6 @@ logs/
 .vscode/
 .idea/
 .DS_Store
+*.swp
+*.swo
+.*.sw?
