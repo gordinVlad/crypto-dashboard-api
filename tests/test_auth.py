@@ -57,3 +57,21 @@ def test_login_wrong_password_fails(client):
 def test_watchlist_requires_authentication(client):
     response = client.get("/api/watchlist")
     assert response.status_code == 401
+
+
+def test_required_auth_rejects_invalid_token(client):
+    response = client.get(
+        "/api/watchlist",
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_optional_auth_ignores_invalid_token(client):
+    response = client.get(
+        "/api/cryptocurrencies",
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+
+    assert response.status_code == 200

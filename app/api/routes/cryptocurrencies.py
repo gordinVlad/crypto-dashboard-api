@@ -4,18 +4,25 @@ and historical price data.
 """
 
 import time
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_optional
+from app.api.deps import (
+    get_current_user,
+    get_current_user_optional,
+    require_internal_api_token,
+)
 from app.core.logging import get_logger
+from app.core.time import utc_now
 from app.crud.crypto import (
     add_price_history_points,
     get_all_cryptocurrencies,
     get_cryptocurrency_by_id,
     get_price_history,
-    upsert_cryptocurrency,
+    get_price_history_bounds,
+    upsert_cryptocurrencies,
 )
 from app.crud.watchlist import get_watchlist_crypto_ids
 from app.db.database import get_db
@@ -51,7 +58,11 @@ def list_cryptocurrencies(
     """
     coins = get_all_cryptocurrencies(db, skip=skip, limit=limit)
     watchlist_ids = (
-        get_watchlist_crypto_ids(db, current_user.id) if current_user else set()
+        get_watchlist_crypto_ids(
+            db, current_user.id, [coin.id for coin in coins]
+        )
+        if current_user
+        else set()
     )
 
     result = []
@@ -76,21 +87,25 @@ def get_cryptocurrency(
         )
     item = CryptocurrencyDetail.model_validate(coin)
     if current_user:
-        item.is_in_watchlist = coin.id in get_watchlist_crypto_ids(db, current_user.id)
+        item.is_in_watchlist = coin.id in get_watchlist_crypto_ids(
+            db, current_user.id, [coin.id]
+        )
     return item
 
 
 @router.get("/{crypto_id}/history", response_model=PriceHistoryOut)
 def get_cryptocurrency_history(
     crypto_id: int,
+    request: Request,
     days: int = Query(7, ge=1, le=365, description="Number of days of history"),
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """
     Get historical price data for a cryptocurrency.
 
-    Strategy: if we already have history stored locally, return it.
-    Otherwise, fetch it from CoinGecko, persist it, and return it.
+    Return only points in the requested date range. Refetch when the local
+    cache does not cover that range, then merge the new points into the cache.
     """
     coin = get_cryptocurrency_by_id(db, crypto_id)
     if not coin:
@@ -98,19 +113,35 @@ def get_cryptocurrency_history(
             status_code=status.HTTP_404_NOT_FOUND, detail="Cryptocurrency not found"
         )
 
-    existing_history = get_price_history(db, crypto_id)
-    if existing_history:
+    now = utc_now()
+    start_time = now - timedelta(days=days)
+    coverage_tolerance = (
+        timedelta(minutes=5)
+        if days <= 1
+        else timedelta(hours=1)
+        if days <= 90
+        else timedelta(days=1)
+    )
+    cache_bounds = get_price_history_bounds(db, crypto_id)
+    cache_covers_requested_range = (
+        cache_bounds is not None
+        and cache_bounds[0] <= start_time + coverage_tolerance
+        and cache_bounds[1] >= now - coverage_tolerance
+    )
+
+    if cache_covers_requested_range:
         logger.debug(
             "price history cache hit",
-            extra={"crypto_id": crypto_id, "points": len(existing_history)},
+            extra={"crypto_id": crypto_id, "days": days},
         )
     else:
         logger.info(
-            "price history cache miss, fetching from coingecko",
+            "price history cache incomplete, fetching from coingecko",
             extra={
                 "crypto_id": crypto_id,
                 "external_provider_id": coin.external_provider_id,
                 "days": days,
+                "cache_bounds": cache_bounds,
             },
         )
         try:
@@ -118,13 +149,18 @@ def get_cryptocurrency_history(
                 coin.external_provider_id, days=days
             )
         except CoinGeckoError as exc:
-            logger.warning(
+            logger.exception(
                 "failed to fetch price history from coingecko",
-                extra={"crypto_id": crypto_id, "error": str(exc)},
+                extra={
+                    "request_id": request.state.request_id,
+                    "crypto_id": crypto_id,
+                    "external_provider_id": coin.external_provider_id,
+                    "days": days,
+                },
             )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to fetch history from external provider: {exc}",
+                detail="External provider is temporarily unavailable. Please try again later.",
             ) from exc
 
         points_added = add_price_history_points(db, crypto_id, points)
@@ -132,7 +168,10 @@ def get_cryptocurrency_history(
             "price history fetched and persisted",
             extra={"crypto_id": crypto_id, "points_added": points_added},
         )
-        existing_history = get_price_history(db, crypto_id)
+
+    existing_history = get_price_history(
+        db, crypto_id, start_time=start_time, end_time=now
+    )
 
     return PriceHistoryOut(
         cryptocurrency_id=coin.id,
@@ -146,8 +185,10 @@ def get_cryptocurrency_history(
 
 @router.post("/refresh", response_model=RefreshResult)
 def refresh_cryptocurrencies(
+    request: Request,
     limit: int = Query(50, ge=1, le=250),
     db: Session = Depends(get_db),
+    _: None = Depends(require_internal_api_token),
 ):
     """
     Refresh cryptocurrency data from the external provider (CoinGecko).
@@ -159,18 +200,16 @@ def refresh_cryptocurrencies(
     try:
         markets = coingecko_client.get_markets(limit=limit)
     except CoinGeckoError as exc:
-        logger.warning(
+        logger.exception(
             "crypto refresh failed to fetch from coingecko",
-            extra={"limit": limit, "error": str(exc)},
+            extra={"request_id": request.state.request_id, "limit": limit},
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch data from external provider: {exc}",
+            detail="External provider is temporarily unavailable. Please try again later.",
         ) from exc
 
-    created_count = 0
-    updated_count = 0
-
+    records = []
     for coin_data in markets:
         record_data = {
             "name": coin_data.get("name"),
@@ -185,12 +224,16 @@ def refresh_cryptocurrencies(
         }
         if not record_data["external_provider_id"] or not record_data["name"]:
             continue
+        records.append(record_data)
 
-        _, was_created = upsert_cryptocurrency(db, record_data)
-        if was_created:
-            created_count += 1
-        else:
-            updated_count += 1
+    try:
+        created_count, updated_count = upsert_cryptocurrencies(db, records)
+    except Exception:
+        logger.exception(
+            "crypto refresh failed to persist batch",
+            extra={"limit": limit, "record_count": len(records)},
+        )
+        raise
 
     duration_ms = round((time.perf_counter() - start) * 1000, 2)
     logger.info(

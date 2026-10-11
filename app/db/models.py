@@ -4,16 +4,12 @@ SQLAlchemy ORM models.
 
 from datetime import datetime
 
-from sqlalchemy import (
-    DateTime,
-    Float,
-    ForeignKey,
-    String,
-    UniqueConstraint,
-)
+from sqlalchemy import Float, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.time import utc_now
 from app.db.database import Base
+from app.db.types import UTCDateTime
 
 
 class User(Base):
@@ -22,7 +18,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
     watchlist_items: Mapped[list["WatchlistItem"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -45,7 +41,9 @@ class Cryptocurrency(Base):
         Float, nullable=True
     )
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    last_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_updated_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
 
     price_history: Mapped[list["PriceHistoryEntry"]] = relationship(
         back_populates="cryptocurrency", cascade="all, delete-orphan"
@@ -63,7 +61,9 @@ class PriceHistoryEntry(Base):
         ForeignKey("cryptocurrencies.id"), nullable=False, index=True
     )
     price: Mapped[float] = mapped_column(Float, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, index=True
+    )
 
     cryptocurrency: Mapped["Cryptocurrency"] = relationship(
         back_populates="price_history"
@@ -86,7 +86,7 @@ class WatchlistItem(Base):
     cryptocurrency_id: Mapped[int] = mapped_column(
         ForeignKey("cryptocurrencies.id"), nullable=False, index=True
     )
-    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    added_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
     user: Mapped["User"] = relationship(back_populates="watchlist_items")
     cryptocurrency: Mapped["Cryptocurrency"] = relationship(

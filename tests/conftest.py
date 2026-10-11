@@ -1,40 +1,63 @@
 """
-Shared pytest fixtures: an isolated in-memory-like SQLite test database and
-a FastAPI TestClient wired to use it instead of the real database file.
+Shared pytest fixtures: an isolated temporary SQLite database and a
+FastAPI TestClient wired to use it instead of the real database file.
 """
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
 
-from app.db.database import Base, get_db
+from app.core.config import settings
+from app.db.database import get_db
 from app.main import app
 
-TEST_DATABASE_URL = "sqlite:///./test_crypto_dashboard.db"
-
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-@pytest.fixture(scope="function", autouse=True)
-def setup_database():
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
-
-
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
+TEST_INTERNAL_API_TOKEN = "test-internal-token-0123456789abcdef"
 
 
 @pytest.fixture()
-def client():
-    return TestClient(app)
+def migrated_test_database(tmp_path):
+    database_url = URL.create(
+        "sqlite", database=str(tmp_path / "test_database.db")
+    ).render_as_string(hide_password=False)
+    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    alembic_config = Config("alembic.ini")
+    with engine.begin() as connection:
+        alembic_config.attributes["connection"] = connection
+        command.upgrade(alembic_config, "head")
+
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture()
+def client(migrated_test_database):
+    testing_session_local = sessionmaker(
+        autocommit=False, autoflush=False, bind=migrated_test_database
+    )
+
+    def override_get_db():
+        db = testing_session_local()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def internal_api_headers(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_API_TOKEN", TEST_INTERNAL_API_TOKEN)
+    return {"X-Internal-Token": TEST_INTERNAL_API_TOKEN}

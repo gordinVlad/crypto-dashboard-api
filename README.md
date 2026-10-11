@@ -70,16 +70,37 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment variables
+### 3. Apply database migrations
+
+Create or upgrade the database schema with Alembic before starting the API:
+
+```bash
+alembic upgrade head
+```
+
+For an existing database created by an older version of this application,
+verify that its schema matches the initial migration, then mark it as migrated
+without changing its tables:
+
+```bash
+alembic stamp 0001_initial
+```
+
+Do not stamp a database until its schema has been checked; use a backup and
+review the generated migration plan before applying future schema changes.
+
+### 4. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env` if needed (see [Environment variables](#environment-variables) below).
-For local development the defaults work out of the box — no changes required.
+Then edit `.env` if needed (see [Environment variables](#environment-variables)
+below). Account and watchlist flows work locally with the defaults. To enable
+CoinGecko refreshes, set `INTERNAL_API_TOKEN` to a dedicated random value and
+send that value in the `X-Internal-Token` header.
 
-### 4. Run the app locally
+### 5. Run the app locally
 
 ```bash
 uvicorn app.main:app --reload
@@ -87,14 +108,13 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://127.0.0.1:8000`.
 
-On startup, the app automatically creates the SQLite database file
-(`crypto_dashboard.db`) and all required tables — no manual database setup
-is needed.
+The app does not create or alter tables at startup. Apply Alembic migrations
+explicitly before running the service.
 
 - Interactive Swagger docs: `http://127.0.0.1:8000/docs`
 - ReDoc docs: `http://127.0.0.1:8000/redoc`
 
-### 5. Run tests
+### 6. Run tests
 
 ```bash
 pytest tests/ -v
@@ -102,6 +122,16 @@ pytest tests/ -v
 
 All external calls to CoinGecko are mocked in the test suite, so tests run
 fully offline and won't be affected by external API rate limits.
+
+To create a new schema revision after model changes:
+
+```bash
+alembic revision --autogenerate -m "describe schema change"
+```
+
+Review generated migration scripts before applying them. Run `alembic upgrade
+head` to apply pending revisions and `alembic downgrade -1` to roll back one
+revision where that migration supports downgrade.
 
 ## Environment variables
 
@@ -113,9 +143,23 @@ fully offline and won't be affected by external API rate limits.
 | `SECRET_KEY` | Secret used to sign JWT tokens — **must** be changed in production | `change-this-secret-in-production` |
 | `ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT token lifetime, in minutes | `1440` (24h) |
+| `CORS_ORIGINS` | JSON array of exact browser origins allowed to access the API | `[]` |
+| `INTERNAL_API_TOKEN` | Dedicated secret required by scheduled jobs to refresh provider data; must be at least 32 characters | Unset (refresh unavailable) |
 | `COINGECKO_BASE_URL` | Base URL of the CoinGecko API | `https://api.coingecko.com/api/v3` |
 | `COINGECKO_REQUEST_TIMEOUT_SECONDS` | Timeout for external API requests | `15` |
 | `DEFAULT_COINS_LIMIT` | Number of coins fetched on refresh, by default | `50` |
+
+In production, startup fails unless `SECRET_KEY` is at least 32 characters,
+has high character diversity, and is not a known placeholder. Generate a
+cryptographically random key with the command below. Configure `CORS_ORIGINS`
+as a JSON array of exact origins, for example
+`["https://dashboard.example.com"]`. CORS is disabled for browser origins by
+default; methods and headers are limited to those used by the API.
+
+Set `INTERNAL_API_TOKEN` to a separate cryptographically random value to enable
+scheduled data refreshes. Send it in the `X-Internal-Token` header when calling
+`POST /api/cryptocurrencies/refresh`. If it is unset, refresh requests fail
+closed with `503`; missing or incorrect tokens receive `401`.
 
 To generate a strong `SECRET_KEY`:
 
@@ -130,7 +174,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 1. `POST /api/auth/register` — create an account.
 2. `POST /api/auth/login` — log in, receive a JWT `access_token`.
 3. `POST /api/cryptocurrencies/refresh` — populate the local database with
-   current data from CoinGecko (run this at least once).
+   current data from CoinGecko; a scheduled job must supply `X-Internal-Token`.
 4. `GET /api/cryptocurrencies` — browse the dashboard-style list.
 5. `POST /api/watchlist` (with `Authorization: Bearer <token>`) — add a coin
    to your watchlist.
@@ -145,17 +189,17 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 | POST | `/api/auth/login` | No | Log in, get a JWT (form fields: `username`, `password`) |
 | GET | `/api/cryptocurrencies` | No | List cryptocurrencies from the local DB |
 | GET | `/api/cryptocurrencies/:id` | No | Get details for one cryptocurrency |
-| GET | `/api/cryptocurrencies/:id/history?days=7` | No | Get historical price points |
-| POST | `/api/cryptocurrencies/refresh?limit=50` | No | Sync data from CoinGecko into the local DB |
+| GET | `/api/cryptocurrencies/:id/history?days=7` | Yes | Get cached points in the requested date range; missing coverage is fetched and cached |
+| POST | `/api/cryptocurrencies/refresh?limit=50` | `X-Internal-Token` | Sync data from CoinGecko into the local DB |
 | GET | `/api/watchlist` | Yes | Get the current user's watchlist |
 | POST | `/api/watchlist` | Yes | Add a coin to the watchlist (`cryptocurrency_id` or `external_provider_id`) |
 | DELETE | `/api/watchlist/:id` | Yes | Remove an item from the watchlist |
 | GET | `/health` | No | Health check |
 
-> Note: `refresh` and the read endpoints are left public (no auth) since
-> they serve general market data, not user-specific data — matching the
-> assignment's suggested routes. Only the watchlist, which is
-> user-specific, requires authentication.
+> Registration and login remain public so users can create accounts and obtain
+> credentials. Watchlist writes and price-history requests require a logged-in
+> user. The refresh endpoint uses a dedicated internal token so scheduled jobs
+> can sync provider data without exposing a public trigger.
 
 ### Authentication
 
@@ -182,7 +226,8 @@ curl -X POST http://127.0.0.1:8000/api/auth/login \
   -d "username=user@example.com&password=password123"
 
 # Refresh coin data from CoinGecko
-curl -X POST http://127.0.0.1:8000/api/cryptocurrencies/refresh
+curl -X POST http://127.0.0.1:8000/api/cryptocurrencies/refresh \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN"
 
 # List cryptocurrencies
 curl http://127.0.0.1:8000/api/cryptocurrencies
@@ -197,7 +242,8 @@ curl -X POST http://127.0.0.1:8000/api/watchlist \
 curl http://127.0.0.1:8000/api/watchlist -H "Authorization: Bearer TOKEN"
 
 # Get price history
-curl "http://127.0.0.1:8000/api/cryptocurrencies/1/history?days=7"
+curl "http://127.0.0.1:8000/api/cryptocurrencies/1/history?days=7" \
+  -H "Authorization: Bearer TOKEN"
 ```
 
 ### Error handling
@@ -305,5 +351,3 @@ automatically on every push and pull request to `main`.
 
 ## Git repositry
 https://github.com/gordinVlad/crypto-dashboard-api.git
-
-

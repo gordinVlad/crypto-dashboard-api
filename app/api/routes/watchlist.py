@@ -16,6 +16,7 @@ from app.crud.watchlist import (
     add_to_watchlist,
     get_watchlist_for_user,
     get_watchlist_item,
+    get_watchlist_item_for_user,
     remove_from_watchlist,
 )
 from app.db.database import get_db
@@ -105,9 +106,8 @@ def remove_watchlist_item(
     current_user: User = Depends(get_current_user),
 ):
     """Remove an item from the authenticated user's watchlist."""
-    items = get_watchlist_for_user(db, current_user.id)
-    match = next((i for i in items if i.id == watchlist_item_id), None)
-    if not match:
+    item = get_watchlist_item_for_user(db, watchlist_item_id, current_user.id)
+    if not item:
         logger.info(
             "watchlist remove attempted for missing item",
             extra={"user_id": current_user.id, "watchlist_item_id": watchlist_item_id},
@@ -115,13 +115,13 @@ def remove_watchlist_item(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Watchlist item not found"
         )
-    remove_from_watchlist(db, match)
+    remove_from_watchlist(db, item)
     logger.info(
         "watchlist item removed",
         extra={
             "user_id": current_user.id,
             "watchlist_item_id": watchlist_item_id,
-            "crypto_id": match.cryptocurrency_id,
+            "crypto_id": item.cryptocurrency_id,
         },
     )
     return None

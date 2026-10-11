@@ -128,9 +128,7 @@ class CoinGeckoClient:
 
         points: list[tuple[datetime, float]] = []
         for timestamp_ms, price in data["prices"]:
-            ts = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).replace(
-                tzinfo=None
-            )
+            ts = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
             points.append((ts, float(price)))
         return points
 
