@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Browser access; configure as a JSON array, e.g. ["https://example.com"].
     CORS_ORIGINS: list[str] = []
 
+    # Secret used by scheduled jobs to trigger provider data refreshes.
+    INTERNAL_API_TOKEN: str | None = None
+
     # External provider (CoinGecko)
     COINGECKO_BASE_URL: str = "https://api.coingecko.com/api/v3"
     COINGECKO_REQUEST_TIMEOUT_SECONDS: int = 15
@@ -103,6 +106,16 @@ class Settings(BaseSettings):
         if any(not origin or origin == "*" for origin in normalized_origins):
             raise ValueError("CORS_ORIGINS must contain explicit, non-empty origins")
         return normalized_origins
+
+    @field_validator("INTERNAL_API_TOKEN")
+    @classmethod
+    def validate_internal_api_token(cls, token: str | None) -> str | None:
+        if token is None or not token.strip():
+            return None
+        normalized_token = token.strip()
+        if len(normalized_token) < 32:
+            raise ValueError("INTERNAL_API_TOKEN must be at least 32 characters")
+        return normalized_token
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

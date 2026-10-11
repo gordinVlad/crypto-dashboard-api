@@ -8,7 +8,11 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_optional
+from app.api.deps import (
+    get_current_user,
+    get_current_user_optional,
+    require_internal_api_token,
+)
 from app.core.logging import get_logger
 from app.crud.crypto import (
     add_price_history_points,
@@ -85,6 +89,7 @@ def get_cryptocurrency_history(
     crypto_id: int,
     days: int = Query(7, ge=1, le=365, description="Number of days of history"),
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """
     Get historical price data for a cryptocurrency.
@@ -148,6 +153,7 @@ def get_cryptocurrency_history(
 def refresh_cryptocurrencies(
     limit: int = Query(50, ge=1, le=250),
     db: Session = Depends(get_db),
+    _: None = Depends(require_internal_api_token),
 ):
     """
     Refresh cryptocurrency data from the external provider (CoinGecko).

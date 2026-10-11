@@ -59,3 +59,14 @@ def test_cors_origins_are_normalized():
 def test_cors_rejects_wildcard_or_empty_origins(origins):
     with pytest.raises(ValidationError, match="CORS_ORIGINS"):
         Settings(_env_file=None, CORS_ORIGINS=origins)
+
+
+def test_internal_api_token_requires_minimum_length():
+    with pytest.raises(ValidationError, match="INTERNAL_API_TOKEN"):
+        Settings(_env_file=None, INTERNAL_API_TOKEN="too-short")
+
+
+def test_blank_internal_api_token_is_treated_as_unconfigured():
+    settings = Settings(_env_file=None, INTERNAL_API_TOKEN=" ")
+
+    assert settings.INTERNAL_API_TOKEN is None

@@ -3,10 +3,13 @@ Reusable FastAPI dependencies, e.g. resolving the current authenticated user
 from the JWT bearer token.
 """
 
-from fastapi import Depends, HTTPException, Request, status
+import secrets
+
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import decode_access_token
 from app.crud.user import get_user_by_id
@@ -14,6 +17,27 @@ from app.db.database import get_db
 from app.db.models import User
 
 logger = get_logger(__name__)
+
+
+def require_internal_api_token(
+    internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> None:
+    """Authenticate scheduled jobs using a separately configured secret."""
+    configured_token = settings.INTERNAL_API_TOKEN
+    if configured_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal API token is not configured",
+        )
+    if internal_token is None or not secrets.compare_digest(
+        internal_token, configured_token
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal API token",
+            headers={"WWW-Authenticate": "Internal"},
+        )
+
 
 # tokenUrl is only used for the interactive Swagger UI "Authorize" button.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -89,4 +113,3 @@ def get_current_user_optional(
         return None
     request.state.user_id = user.id
     return user
-
