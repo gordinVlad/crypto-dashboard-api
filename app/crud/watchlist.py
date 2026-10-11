@@ -30,12 +30,31 @@ def get_watchlist_item(
     )
 
 
-def get_watchlist_crypto_ids(db: Session, user_id: int) -> set[int]:
-    rows = (
-        db.query(WatchlistItem.cryptocurrency_id)
-        .filter(WatchlistItem.user_id == user_id)
-        .all()
+def get_watchlist_item_for_user(
+    db: Session, watchlist_item_id: int, user_id: int
+) -> WatchlistItem | None:
+    return (
+        db.query(WatchlistItem)
+        .filter(
+            WatchlistItem.id == watchlist_item_id,
+            WatchlistItem.user_id == user_id,
+        )
+        .first()
     )
+
+
+def get_watchlist_crypto_ids(
+    db: Session, user_id: int, cryptocurrency_ids: list[int] | None = None
+) -> set[int]:
+    if cryptocurrency_ids is not None and not cryptocurrency_ids:
+        return set()
+
+    query = db.query(WatchlistItem.cryptocurrency_id).filter(
+        WatchlistItem.user_id == user_id
+    )
+    if cryptocurrency_ids is not None:
+        query = query.filter(WatchlistItem.cryptocurrency_id.in_(cryptocurrency_ids))
+    rows = query.all()
     return {row[0] for row in rows}
 
 

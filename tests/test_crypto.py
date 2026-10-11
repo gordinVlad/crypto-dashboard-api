@@ -202,6 +202,33 @@ def test_watchlist_add_get_remove_flow(client, internal_api_headers):
     assert list_after_delete.json() == []
 
 
+def test_watchlist_delete_only_queries_items_owned_by_current_user(
+    client, internal_api_headers
+):
+    owner_headers = _register_and_login(client, email="watchlist_owner@example.com")
+    other_user_headers = _register_and_login(
+        client, email="watchlist_other@example.com"
+    )
+    with patch(
+        "app.api.routes.cryptocurrencies.coingecko_client.get_markets",
+        return_value=MOCK_MARKETS,
+    ):
+        client.post("/api/cryptocurrencies/refresh", headers=internal_api_headers)
+    coin_id = client.get("/api/cryptocurrencies").json()[0]["id"]
+    item = client.post(
+        "/api/watchlist",
+        json={"cryptocurrency_id": coin_id},
+        headers=owner_headers,
+    ).json()
+
+    response = client.delete(
+        f"/api/watchlist/{item['id']}", headers=other_user_headers
+    )
+
+    assert response.status_code == 404
+    assert len(client.get("/api/watchlist", headers=owner_headers).json()) == 1
+
+
 def test_watchlist_add_unknown_coin_returns_404(client):
     headers = _register_and_login(client, email="unknown_coin_user@example.com")
     response = client.post(

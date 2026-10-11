@@ -21,7 +21,7 @@ from app.crud.crypto import (
     get_cryptocurrency_by_id,
     get_price_history,
     get_price_history_bounds,
-    upsert_cryptocurrency,
+    upsert_cryptocurrencies,
 )
 from app.crud.watchlist import get_watchlist_crypto_ids
 from app.db.database import get_db
@@ -57,7 +57,11 @@ def list_cryptocurrencies(
     """
     coins = get_all_cryptocurrencies(db, skip=skip, limit=limit)
     watchlist_ids = (
-        get_watchlist_crypto_ids(db, current_user.id) if current_user else set()
+        get_watchlist_crypto_ids(
+            db, current_user.id, [coin.id for coin in coins]
+        )
+        if current_user
+        else set()
     )
 
     result = []
@@ -82,7 +86,9 @@ def get_cryptocurrency(
         )
     item = CryptocurrencyDetail.model_validate(coin)
     if current_user:
-        item.is_in_watchlist = coin.id in get_watchlist_crypto_ids(db, current_user.id)
+        item.is_in_watchlist = coin.id in get_watchlist_crypto_ids(
+            db, current_user.id, [coin.id]
+        )
     return item
 
 
@@ -195,9 +201,7 @@ def refresh_cryptocurrencies(
             detail=f"Failed to fetch data from external provider: {exc}",
         ) from exc
 
-    created_count = 0
-    updated_count = 0
-
+    records = []
     for coin_data in markets:
         record_data = {
             "name": coin_data.get("name"),
@@ -212,12 +216,16 @@ def refresh_cryptocurrencies(
         }
         if not record_data["external_provider_id"] or not record_data["name"]:
             continue
+        records.append(record_data)
 
-        _, was_created = upsert_cryptocurrency(db, record_data)
-        if was_created:
-            created_count += 1
-        else:
-            updated_count += 1
+    try:
+        created_count, updated_count = upsert_cryptocurrencies(db, records)
+    except Exception:
+        logger.exception(
+            "crypto refresh failed to persist batch",
+            extra={"limit": limit, "record_count": len(records)},
+        )
+        raise
 
     duration_ms = round((time.perf_counter() - start) * 1000, 2)
     logger.info(
