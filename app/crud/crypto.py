@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.time import utc_now
 from app.db.models import Cryptocurrency, PriceHistoryEntry
 
 
@@ -59,7 +60,7 @@ def upsert_cryptocurrencies(db: Session, rows: list[dict]) -> tuple[int, int]:
 
         created_count = 0
         updated_count = 0
-        now = datetime.utcnow()
+        now = utc_now()
         for data in rows:
             record = records_by_external_id.get(data["external_provider_id"])
             if record is None:

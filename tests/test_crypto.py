@@ -10,7 +10,7 @@ from app.services.coingecko_client import CoinGeckoError
 
 
 def _utcnow():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 MOCK_MARKETS = [

@@ -26,7 +26,7 @@ def upgrade() -> None:
         sa.Column("market_cap", sa.Float(), nullable=True),
         sa.Column("price_change_percentage_24h", sa.Float(), nullable=True),
         sa.Column("image_url", sa.String(), nullable=True),
-        sa.Column("last_updated_at", sa.DateTime(), nullable=True),
+        sa.Column("last_updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("email", sa.String(), nullable=False),
         sa.Column("hashed_password", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_users_email", "users", ["email"], unique=True)
@@ -54,7 +54,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("cryptocurrency_id", sa.Integer(), nullable=False),
         sa.Column("price", sa.Float(), nullable=False),
-        sa.Column("timestamp", sa.DateTime(), nullable=False),
+        sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["cryptocurrency_id"], ["cryptocurrencies.id"]
         ),
@@ -76,7 +76,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("cryptocurrency_id", sa.Integer(), nullable=False),
-        sa.Column("added_at", sa.DateTime(), nullable=False),
+        sa.Column("added_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["cryptocurrency_id"], ["cryptocurrencies.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),

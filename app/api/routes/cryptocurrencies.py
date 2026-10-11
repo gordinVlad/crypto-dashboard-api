@@ -4,7 +4,7 @@ and historical price data.
 """
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from app.api.deps import (
     require_internal_api_token,
 )
 from app.core.logging import get_logger
+from app.core.time import utc_now
 from app.crud.crypto import (
     add_price_history_points,
     get_all_cryptocurrencies,
@@ -112,7 +113,7 @@ def get_cryptocurrency_history(
             status_code=status.HTTP_404_NOT_FOUND, detail="Cryptocurrency not found"
         )
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = utc_now()
     start_time = now - timedelta(days=days)
     coverage_tolerance = (
         timedelta(minutes=5)
