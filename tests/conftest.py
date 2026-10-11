@@ -1,6 +1,6 @@
 """
-Shared pytest fixtures: an isolated in-memory-like SQLite test database and
-a FastAPI TestClient wired to use it instead of the real database file.
+Shared pytest fixtures: an isolated temporary SQLite database and a
+FastAPI TestClient wired to use it instead of the real database file.
 """
 
 import pytest
@@ -29,8 +29,10 @@ def migrated_test_database(tmp_path):
         alembic_config.attributes["connection"] = connection
         command.upgrade(alembic_config, "head")
 
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture()
@@ -46,10 +48,13 @@ def client(migrated_test_database):
         finally:
             db.close()
 
+    app.dependency_overrides.clear()
     app.dependency_overrides[get_db] = override_get_db
-    test_client = TestClient(app)
-    yield test_client
-    app.dependency_overrides.pop(get_db, None)
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture()
