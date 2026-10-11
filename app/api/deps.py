@@ -43,39 +43,50 @@ def require_internal_api_token(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
-def get_current_user(
+def _resolve_user_from_token(
     request: Request,
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
+    token: str | None,
+    db: Session,
+) -> User | None:
+    if not token:
+        return None
     payload = decode_access_token(token)
     if payload is None:
         logger.warning("jwt decode failed or token invalid/expired")
-        raise credentials_exception
+        return None
 
     user_id_raw = payload.get("sub")
     if user_id_raw is None:
         logger.warning("jwt missing sub claim")
-        raise credentials_exception
+        return None
 
     try:
         user_id = int(user_id_raw)
     except (TypeError, ValueError):
         logger.warning("jwt sub claim is not a valid user id", extra={"sub": user_id_raw})
-        raise credentials_exception from None
+        return None
 
     user = get_user_by_id(db, user_id)
     if user is None:
         logger.warning("jwt valid but user no longer exists", extra={"user_id": user_id})
-        raise credentials_exception
+        return None
 
     request.state.user_id = user.id
+    return user
+
+
+def get_current_user(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    user = _resolve_user_from_token(request, token, db)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user
 
 
@@ -92,24 +103,4 @@ def get_current_user_optional(
     token: str | None = Depends(_optional_oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User | None:
-    if not token:
-        return None
-    payload = decode_access_token(token)
-    if payload is None:
-        logger.warning("jwt decode failed or token invalid/expired")
-        return None
-    user_id_raw = payload.get("sub")
-    if user_id_raw is None:
-        logger.warning("jwt missing sub claim")
-        return None
-    try:
-        user_id = int(user_id_raw)
-    except (TypeError, ValueError):
-        logger.warning("jwt sub claim is not a valid user id", extra={"sub": user_id_raw})
-        return None
-    user = get_user_by_id(db, user_id)
-    if user is None:
-        logger.warning("jwt valid but user no longer exists", extra={"user_id": user_id})
-        return None
-    request.state.user_id = user.id
-    return user
+    return _resolve_user_from_token(request, token, db)
