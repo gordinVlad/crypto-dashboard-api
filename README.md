@@ -70,7 +70,26 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment variables
+### 3. Apply database migrations
+
+Create or upgrade the database schema with Alembic before starting the API:
+
+```bash
+alembic upgrade head
+```
+
+For an existing database created by an older version of this application,
+verify that its schema matches the initial migration, then mark it as migrated
+without changing its tables:
+
+```bash
+alembic stamp 0001_initial
+```
+
+Do not stamp a database until its schema has been checked; use a backup and
+review the generated migration plan before applying future schema changes.
+
+### 4. Configure environment variables
 
 ```bash
 cp .env.example .env
@@ -81,7 +100,7 @@ below). Account and watchlist flows work locally with the defaults. To enable
 CoinGecko refreshes, set `INTERNAL_API_TOKEN` to a dedicated random value and
 send that value in the `X-Internal-Token` header.
 
-### 4. Run the app locally
+### 5. Run the app locally
 
 ```bash
 uvicorn app.main:app --reload
@@ -89,14 +108,13 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://127.0.0.1:8000`.
 
-On startup, the app automatically creates the SQLite database file
-(`crypto_dashboard.db`) and all required tables — no manual database setup
-is needed.
+The app does not create or alter tables at startup. Apply Alembic migrations
+explicitly before running the service.
 
 - Interactive Swagger docs: `http://127.0.0.1:8000/docs`
 - ReDoc docs: `http://127.0.0.1:8000/redoc`
 
-### 5. Run tests
+### 6. Run tests
 
 ```bash
 pytest tests/ -v
@@ -104,6 +122,16 @@ pytest tests/ -v
 
 All external calls to CoinGecko are mocked in the test suite, so tests run
 fully offline and won't be affected by external API rate limits.
+
+To create a new schema revision after model changes:
+
+```bash
+alembic revision --autogenerate -m "describe schema change"
+```
+
+Review generated migration scripts before applying them. Run `alembic upgrade
+head` to apply pending revisions and `alembic downgrade -1` to roll back one
+revision where that migration supports downgrade.
 
 ## Environment variables
 

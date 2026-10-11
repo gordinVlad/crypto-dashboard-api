@@ -1,6 +1,6 @@
 """
 Application entry point: creates the FastAPI app, registers routers,
-sets up CORS and global error handling, and creates DB tables on startup.
+sets up CORS and global error handling.
 """
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -12,14 +12,9 @@ from app.api.routes import auth, cryptocurrencies, watchlist
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextLogMiddleware
-from app.db.database import Base, engine
 
 configure_logging()
 logger = get_logger(__name__)
-
-# Create all tables on startup if they don't exist yet (fine for SQLite /
-# a take-home assignment; a real production app would use migrations).
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.APP_NAME,
