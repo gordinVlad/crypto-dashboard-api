@@ -4,6 +4,7 @@ CRUD operations for Cryptocurrency and PriceHistoryEntry models.
 
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models import Cryptocurrency, PriceHistoryEntry
@@ -107,11 +108,32 @@ def add_price_history_points(
 
 
 def get_price_history(
-    db: Session, cryptocurrency_id: int
+    db: Session,
+    cryptocurrency_id: int,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
 ) -> list[PriceHistoryEntry]:
-    return (
-        db.query(PriceHistoryEntry)
-        .filter(PriceHistoryEntry.cryptocurrency_id == cryptocurrency_id)
-        .order_by(PriceHistoryEntry.timestamp.asc())
-        .all()
+    query = db.query(PriceHistoryEntry).filter(
+        PriceHistoryEntry.cryptocurrency_id == cryptocurrency_id
     )
+    if start_time is not None:
+        query = query.filter(PriceHistoryEntry.timestamp >= start_time)
+    if end_time is not None:
+        query = query.filter(PriceHistoryEntry.timestamp <= end_time)
+    return query.order_by(PriceHistoryEntry.timestamp.asc()).all()
+
+
+def get_price_history_bounds(
+    db: Session, cryptocurrency_id: int
+) -> tuple[datetime, datetime] | None:
+    start_time, end_time = (
+        db.query(
+            func.min(PriceHistoryEntry.timestamp),
+            func.max(PriceHistoryEntry.timestamp),
+        )
+        .filter(PriceHistoryEntry.cryptocurrency_id == cryptocurrency_id)
+        .one()
+    )
+    if start_time is None or end_time is None:
+        return None
+    return start_time, end_time

@@ -161,7 +161,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 | POST | `/api/auth/login` | No | Log in, get a JWT (form fields: `username`, `password`) |
 | GET | `/api/cryptocurrencies` | No | List cryptocurrencies from the local DB |
 | GET | `/api/cryptocurrencies/:id` | No | Get details for one cryptocurrency |
-| GET | `/api/cryptocurrencies/:id/history?days=7` | Yes | Get historical price points; fetch-on-miss requires login |
+| GET | `/api/cryptocurrencies/:id/history?days=7` | Yes | Get cached points in the requested date range; missing coverage is fetched and cached |
 | POST | `/api/cryptocurrencies/refresh?limit=50` | `X-Internal-Token` | Sync data from CoinGecko into the local DB |
 | GET | `/api/watchlist` | Yes | Get the current user's watchlist |
 | POST | `/api/watchlist` | Yes | Add a coin to the watchlist (`cryptocurrency_id` or `external_provider_id`) |

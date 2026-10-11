@@ -3,8 +3,13 @@ Tests for cryptocurrency listing/detail/refresh/history and the watchlist,
 using a mocked CoinGecko client so tests don't depend on network access.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 MOCK_MARKETS = [
     {
@@ -28,9 +33,10 @@ MOCK_MARKETS = [
 ]
 
 MOCK_HISTORY = [
-    (datetime(2026, 7, 20, 0, 0, 0), 64000.0),
-    (datetime(2026, 7, 21, 0, 0, 0), 64500.0),
-    (datetime(2026, 7, 22, 0, 0, 0), 65000.0),
+    (_utcnow() - timedelta(days=8), 63000.0),
+    (_utcnow() - timedelta(days=6), 64000.0),
+    (_utcnow() - timedelta(days=3), 64500.0),
+    (_utcnow() - timedelta(minutes=1), 65000.0),
 ]
 
 
@@ -63,6 +69,10 @@ def test_refresh_populates_cryptocurrencies(client, internal_api_headers):
     assert len(coins) == 2
     symbols = {c["symbol"] for c in coins}
     assert symbols == {"BTC", "ETH"}
+    first_page = client.get("/api/cryptocurrencies?skip=0&limit=1")
+    second_page = client.get("/api/cryptocurrencies?skip=1&limit=1")
+    assert [coin["symbol"] for coin in first_page.json()] == ["BTC"]
+    assert [coin["symbol"] for coin in second_page.json()] == ["ETH"]
 
 
 def test_get_cryptocurrency_detail_and_404(client, internal_api_headers):
@@ -101,6 +111,11 @@ def test_history_fetches_from_provider_when_empty(client, internal_api_headers):
         assert response.status_code == 200
         data = response.json()
         assert len(data["points"]) == 3
+        assert all(
+            datetime.fromisoformat(point["timestamp"])
+            >= _utcnow() - timedelta(days=7, seconds=2)
+            for point in data["points"]
+        )
         mocked_chart.assert_called_once()
 
         # Calling again should use the locally stored history and NOT hit
@@ -111,6 +126,47 @@ def test_history_fetches_from_provider_when_empty(client, internal_api_headers):
         )
         assert response_2.status_code == 200
         mocked_chart.assert_not_called()
+
+
+def test_history_refetches_when_requested_range_exceeds_cached_coverage(
+    client, internal_api_headers
+):
+    auth_headers = _register_and_login(client, email="broad_history_user@example.com")
+    with patch(
+        "app.api.routes.cryptocurrencies.coingecko_client.get_markets",
+        return_value=MOCK_MARKETS,
+    ):
+        client.post("/api/cryptocurrencies/refresh", headers=internal_api_headers)
+    coin_id = client.get("/api/cryptocurrencies").json()[0]["id"]
+    broad_history = [
+        (_utcnow() - timedelta(days=31), 60000.0),
+        (_utcnow() - timedelta(days=25), 62000.0),
+        (_utcnow() - timedelta(minutes=1), 65000.0),
+    ]
+
+    with patch(
+        "app.api.routes.cryptocurrencies.coingecko_client.get_market_chart",
+        side_effect=[MOCK_HISTORY, broad_history],
+    ) as mocked_chart:
+        recent_response = client.get(
+            f"/api/cryptocurrencies/{coin_id}/history?days=7",
+            headers=auth_headers,
+        )
+        broad_response = client.get(
+            f"/api/cryptocurrencies/{coin_id}/history?days=30",
+            headers=auth_headers,
+        )
+
+    assert recent_response.status_code == 200
+    assert broad_response.status_code == 200
+    broad_points = broad_response.json()["points"]
+    assert len(broad_points) == 6
+    assert all(
+        datetime.fromisoformat(point["timestamp"])
+        >= _utcnow() - timedelta(days=30, seconds=2)
+        for point in broad_points
+    )
+    assert [call.kwargs["days"] for call in mocked_chart.call_args_list] == [7, 30]
 
 
 def test_watchlist_add_get_remove_flow(client, internal_api_headers):

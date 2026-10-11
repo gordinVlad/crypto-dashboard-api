@@ -4,6 +4,7 @@ and historical price data.
 """
 
 import time
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -19,6 +20,7 @@ from app.crud.crypto import (
     get_all_cryptocurrencies,
     get_cryptocurrency_by_id,
     get_price_history,
+    get_price_history_bounds,
     upsert_cryptocurrency,
 )
 from app.crud.watchlist import get_watchlist_crypto_ids
@@ -94,8 +96,8 @@ def get_cryptocurrency_history(
     """
     Get historical price data for a cryptocurrency.
 
-    Strategy: if we already have history stored locally, return it.
-    Otherwise, fetch it from CoinGecko, persist it, and return it.
+    Return only points in the requested date range. Refetch when the local
+    cache does not cover that range, then merge the new points into the cache.
     """
     coin = get_cryptocurrency_by_id(db, crypto_id)
     if not coin:
@@ -103,19 +105,35 @@ def get_cryptocurrency_history(
             status_code=status.HTTP_404_NOT_FOUND, detail="Cryptocurrency not found"
         )
 
-    existing_history = get_price_history(db, crypto_id)
-    if existing_history:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    start_time = now - timedelta(days=days)
+    coverage_tolerance = (
+        timedelta(minutes=5)
+        if days <= 1
+        else timedelta(hours=1)
+        if days <= 90
+        else timedelta(days=1)
+    )
+    cache_bounds = get_price_history_bounds(db, crypto_id)
+    cache_covers_requested_range = (
+        cache_bounds is not None
+        and cache_bounds[0] <= start_time + coverage_tolerance
+        and cache_bounds[1] >= now - coverage_tolerance
+    )
+
+    if cache_covers_requested_range:
         logger.debug(
             "price history cache hit",
-            extra={"crypto_id": crypto_id, "points": len(existing_history)},
+            extra={"crypto_id": crypto_id, "days": days},
         )
     else:
         logger.info(
-            "price history cache miss, fetching from coingecko",
+            "price history cache incomplete, fetching from coingecko",
             extra={
                 "crypto_id": crypto_id,
                 "external_provider_id": coin.external_provider_id,
                 "days": days,
+                "cache_bounds": cache_bounds,
             },
         )
         try:
@@ -137,7 +155,10 @@ def get_cryptocurrency_history(
             "price history fetched and persisted",
             extra={"crypto_id": crypto_id, "points_added": points_added},
         )
-        existing_history = get_price_history(db, crypto_id)
+
+    existing_history = get_price_history(
+        db, crypto_id, start_time=start_time, end_time=now
+    )
 
     return PriceHistoryOut(
         cryptocurrency_id=coin.id,
