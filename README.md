@@ -113,9 +113,17 @@ fully offline and won't be affected by external API rate limits.
 | `SECRET_KEY` | Secret used to sign JWT tokens — **must** be changed in production | `change-this-secret-in-production` |
 | `ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT token lifetime, in minutes | `1440` (24h) |
+| `CORS_ORIGINS` | JSON array of exact browser origins allowed to access the API | `[]` |
 | `COINGECKO_BASE_URL` | Base URL of the CoinGecko API | `https://api.coingecko.com/api/v3` |
 | `COINGECKO_REQUEST_TIMEOUT_SECONDS` | Timeout for external API requests | `15` |
 | `DEFAULT_COINS_LIMIT` | Number of coins fetched on refresh, by default | `50` |
+
+In production, startup fails unless `SECRET_KEY` is at least 32 characters,
+has high character diversity, and is not a known placeholder. Generate a
+cryptographically random key with the command below. Configure `CORS_ORIGINS`
+as a JSON array of exact origins, for example
+`["https://dashboard.example.com"]`. CORS is disabled for browser origins by
+default; methods and headers are limited to those used by the API.
 
 To generate a strong `SECRET_KEY`:
 
@@ -305,5 +313,3 @@ automatically on every push and pull request to `main`.
 
 ## Git repositry
 https://github.com/gordinVlad/crypto-dashboard-api.git
-
-
