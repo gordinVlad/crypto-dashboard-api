@@ -61,6 +61,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Return a consistent JSON body for all HTTPExceptions raised in routes."""
+    if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+        safe_detail = "External provider is temporarily unavailable. Please try again later."
+    elif exc.status_code >= 500:
+        safe_detail = "An unexpected error occurred. Please try again later."
+    else:
+        safe_detail = exc.detail
+
     level = logger.error if exc.status_code >= 500 else logger.warning
     level(
         "http exception raised",
@@ -69,11 +76,15 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             "path": request.url.path,
             "status_code": exc.status_code,
             "detail": exc.detail,
+            "request_id": getattr(request.state, "request_id", None),
         },
     )
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail},
+        content={
+            "detail": safe_detail,
+            "request_id": getattr(request.state, "request_id", None),
+        },
         headers=exc.headers,
     )
 

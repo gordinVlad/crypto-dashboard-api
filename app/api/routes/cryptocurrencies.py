@@ -6,7 +6,7 @@ and historical price data.
 import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -95,6 +95,7 @@ def get_cryptocurrency(
 @router.get("/{crypto_id}/history", response_model=PriceHistoryOut)
 def get_cryptocurrency_history(
     crypto_id: int,
+    request: Request,
     days: int = Query(7, ge=1, le=365, description="Number of days of history"),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -147,13 +148,18 @@ def get_cryptocurrency_history(
                 coin.external_provider_id, days=days
             )
         except CoinGeckoError as exc:
-            logger.warning(
+            logger.exception(
                 "failed to fetch price history from coingecko",
-                extra={"crypto_id": crypto_id, "error": str(exc)},
+                extra={
+                    "request_id": request.state.request_id,
+                    "crypto_id": crypto_id,
+                    "external_provider_id": coin.external_provider_id,
+                    "days": days,
+                },
             )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to fetch history from external provider: {exc}",
+                detail="External provider is temporarily unavailable. Please try again later.",
             ) from exc
 
         points_added = add_price_history_points(db, crypto_id, points)
@@ -178,6 +184,7 @@ def get_cryptocurrency_history(
 
 @router.post("/refresh", response_model=RefreshResult)
 def refresh_cryptocurrencies(
+    request: Request,
     limit: int = Query(50, ge=1, le=250),
     db: Session = Depends(get_db),
     _: None = Depends(require_internal_api_token),
@@ -192,13 +199,13 @@ def refresh_cryptocurrencies(
     try:
         markets = coingecko_client.get_markets(limit=limit)
     except CoinGeckoError as exc:
-        logger.warning(
+        logger.exception(
             "crypto refresh failed to fetch from coingecko",
-            extra={"limit": limit, "error": str(exc)},
+            extra={"request_id": request.state.request_id, "limit": limit},
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch data from external provider: {exc}",
+            detail="External provider is temporarily unavailable. Please try again later.",
         ) from exc
 
     records = []

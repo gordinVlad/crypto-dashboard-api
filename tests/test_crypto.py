@@ -6,6 +6,8 @@ using a mocked CoinGecko client so tests don't depend on network access.
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+from app.services.coingecko_client import CoinGeckoError
+
 
 def _utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -274,3 +276,85 @@ def test_price_history_requires_authentication(client):
 
     mocked_chart.assert_not_called()
     assert response.status_code == 401
+
+
+def test_history_provider_error_is_safe_and_logged_with_request_context(
+    client, internal_api_headers
+):
+    auth_headers = _register_and_login(client, email="history_error_user@example.com")
+    with patch(
+        "app.api.routes.cryptocurrencies.coingecko_client.get_markets",
+        return_value=MOCK_MARKETS,
+    ):
+        client.post("/api/cryptocurrencies/refresh", headers=internal_api_headers)
+    coin_id = client.get("/api/cryptocurrencies").json()[0]["id"]
+    provider_error = CoinGeckoError(
+        "request failed at https://private-provider.example/path?token=secret"
+    )
+
+    with (
+        patch(
+            "app.api.routes.cryptocurrencies.coingecko_client.get_market_chart",
+            side_effect=provider_error,
+        ),
+        patch("app.api.routes.cryptocurrencies.logger.exception") as log_exception,
+    ):
+        response = client.get(
+            f"/api/cryptocurrencies/{coin_id}/history",
+            headers={**auth_headers, "X-Request-ID": "history-error-request"},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "External provider is temporarily unavailable. Please try again later."
+    )
+    assert "private-provider.example" not in response.text
+    assert "token=secret" not in response.text
+    assert response.json()["request_id"] == "history-error-request"
+    log_exception.assert_called_once()
+    assert log_exception.call_args.args == (
+        "failed to fetch price history from coingecko",
+    )
+    assert log_exception.call_args.kwargs["extra"] == {
+        "request_id": "history-error-request",
+        "crypto_id": coin_id,
+        "external_provider_id": "bitcoin",
+        "days": 7,
+    }
+
+
+def test_refresh_provider_error_is_safe_and_logged_with_request_context(
+    client, internal_api_headers
+):
+    provider_error = CoinGeckoError(
+        "request failed at https://private-provider.example/markets"
+    )
+    with (
+        patch(
+            "app.api.routes.cryptocurrencies.coingecko_client.get_markets",
+            side_effect=provider_error,
+        ),
+        patch("app.api.routes.cryptocurrencies.logger.exception") as log_exception,
+    ):
+        response = client.post(
+            "/api/cryptocurrencies/refresh",
+            headers={
+                **internal_api_headers,
+                "X-Request-ID": "refresh-error-request",
+            },
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "External provider is temporarily unavailable. Please try again later."
+    )
+    assert "private-provider.example" not in response.text
+    assert response.json()["request_id"] == "refresh-error-request"
+    log_exception.assert_called_once()
+    assert log_exception.call_args.args == (
+        "crypto refresh failed to fetch from coingecko",
+    )
+    assert log_exception.call_args.kwargs["extra"] == {
+        "request_id": "refresh-error-request",
+        "limit": 50,
+    }
